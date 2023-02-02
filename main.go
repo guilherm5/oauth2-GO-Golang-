@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -14,9 +15,28 @@ import (
 var srv *server.Server
 var clientStore *store.ClientStore
 
+type Person struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Age  int    `json:"age"`
+}
+
+var Persons = []Person{
+	{
+		ID:   1,
+		Name: "Guilherme",
+		Age:  22,
+	},
+	{
+		ID:   2,
+		Name: "Jorge",
+		Age:  35,
+	},
+}
+
 func Config() {
 	manager := manage.NewDefaultManager()
-	manager.SetAuthorizeCodeTokenCfg(manage.DefaultAuthorizeCodeTokenCfg)
+
 	// armazenamento de token
 	manager.MustTokenStorage(store.NewMemoryTokenStore())
 
@@ -27,8 +47,14 @@ func Config() {
 	srv = server.NewDefaultServer(manager)
 	srv.SetAllowGetAccessRequest(true)
 	srv.SetClientInfoHandler(server.ClientFormHandler)
-	manager.SetRefreshTokenCfg(manage.DefaultRefreshTokenCfg)
+	refreshTokenCfg := &manage.RefreshingConfig{
+		AccessTokenExp:     time.Hour,
+		RefreshTokenExp:    2 * time.Hour,
+		IsGenerateRefresh:  true,
+		IsResetRefreshTime: false,
+	}
 
+	manager.SetRefreshTokenCfg(refreshTokenCfg)
 }
 
 func Token(c *gin.Context) {
@@ -48,28 +74,51 @@ func Credentials(c *gin.Context) {
 	}
 
 	c.Header("Content-Type", "application/json")
-	c.JSON(200, gin.H{"CLIENT_ID": clientId, "CLIENT_SECRET": clientSecret})
+	c.JSON(200, gin.H{"clientId": clientId, "clientSecret": clientSecret})
 }
 
-func Protedcted(c *gin.Context) {
-	_, err := srv.ValidationBearerToken(c.Request)
-	if err != nil {
-		c.AbortWithStatusJSON(400, gin.H{"error": err.Error()})
-		return
+func MiddlewareAuth() gin.HandlerFunc {
+
+	return func(c *gin.Context) {
+		_, err := srv.ValidationBearerToken(c.Request)
+		if err != nil {
+			c.AbortWithStatusJSON(400, gin.H{"error": err.Error()})
+
+		}
 	}
 
-	c.String(200, "Hello World")
+}
+
+func HelloPerson(c *gin.Context) {
+	c.JSON(200, gin.H{
+		"Return": Persons,
+	})
+}
+
+func PostPerson(c *gin.Context) {
+	var Post Person
+	err := c.ShouldBindJSON(&Post)
+	if err != nil {
+		c.AbortWithStatusJSON(400, gin.H{"error": err.Error()})
+	}
+	c.JSON(200, gin.H{
+		"Return": Post,
+	})
 }
 
 func main() {
 	Config()
 	r := gin.Default()
 
-	r.GET("/token", Token)
+	v1 := r.Group("v1")
+	v2 := r.Group("v2")
+	v2.Use(MiddlewareAuth())
 
-	r.GET("/credentials", Credentials)
+	v2.POST("/PostPerson", PostPerson).Use(MiddlewareAuth())
+	v2.GET("/HelloPerson", HelloPerson).Use(MiddlewareAuth())
 
-	r.GET("/protected", Protedcted)
-
+	v1.GET("/token", Token)
+	v1.GET("/credentials", Credentials)
 	r.Run(":9090")
+
 }
